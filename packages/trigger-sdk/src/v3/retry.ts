@@ -349,12 +349,13 @@ const doFetchRequest = async (
   });
 
   try {
-    const response = await fetch(input, {
+    const isRequest = input instanceof Request;
+    const headers = new Headers(init?.headers ?? (isRequest ? input.headers : undefined));
+    headers.set("x-retry-count", attemptCount.toString());
+
+    const response = await fetch(isRequest && !input.bodyUsed ? input.clone() : input, {
       ...init,
-      headers: {
-        ...init?.headers,
-        "x-retry-count": attemptCount.toString(),
-      },
+      headers,
     });
 
     span.setAttributes(createFetchResponseAttributes(response));
