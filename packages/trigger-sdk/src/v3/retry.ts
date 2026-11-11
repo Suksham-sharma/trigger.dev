@@ -156,6 +156,8 @@ async function retryFetch(
   input: RequestInfo | URL,
   init?: RetryFetchRequestInit | undefined
 ): Promise<Response> {
+  const callerSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+
   return tracer.startActiveSpan(
     "retry.fetch()",
     async (span) => {
@@ -171,9 +173,12 @@ async function retryFetch(
               }, init?.timeoutInMs)
             : undefined;
 
-          init?.signal?.addEventListener("abort", () => {
-            abortController.abort();
-          });
+          const abortAttempt = () => abortController.abort(callerSignal?.reason);
+          callerSignal?.addEventListener("abort", abortAttempt, { once: true });
+
+          if (callerSignal?.aborted) {
+            abortAttempt();
+          }
 
           const [response, span] = await doFetchRequest(
             input,
@@ -247,6 +252,15 @@ async function retryFetch(
             await wait.until({ date: new Date(nextRetry.value) });
           }
         } catch (e) {
+          if (callerSignal?.aborted) {
+            if (e instanceof FetchErrorWithSpan) {
+              e.span.end();
+              throw e.originalError;
+            }
+
+            throw e;
+          }
+
           if (e instanceof FetchErrorWithSpan && e.originalError instanceof Error) {
             if (e.originalError.name === "AbortError") {
               const nextRetryDelay = calculateNextRetryDelay(
